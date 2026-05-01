@@ -16,12 +16,6 @@
 //   The app still works fully offline with localStorage while config is missing.
 //
 
-// Import the functions you need from the SDKs you need
-import { initializeApp } from "firebase/app";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
-
-// Your web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyA0gavae4qacYehTJiouwVzmeVvqFnIPSk",
   authDomain: "dnd-campaign-92c87.firebaseapp.com",
@@ -31,9 +25,6 @@ const firebaseConfig = {
   messagingSenderId: "358879445671",
   appId: "1:358879445671:web:4e285602117f566af1d182"
 };
-
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
 
 // localStorage keys to sync across all connected clients.
 // skt-layout-v1 is intentionally excluded — each user manages their own panel positions.
