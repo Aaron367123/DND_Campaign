@@ -4,7 +4,7 @@
 
 // Open5e API: https://api.open5e.com
 // Fully open, no key needed, CC SRD content.
-const O5E = 'https://api.open5e.com';
+const O5E = 'https://api.open5e.com/v1';
 const o5eCache = {}; // slug -> fetched data, to avoid repeat calls
 
 // Endpoint map per category
@@ -12,7 +12,7 @@ const O5E_ENDPOINTS = {
   monster:   (q) => `${O5E}/monsters/?search=${encodeURIComponent(q)}&limit=10`,
   spell:     (q) => `${O5E}/spells/?search=${encodeURIComponent(q)}&limit=10`,
   item:      (q) => `${O5E}/magicitems/?search=${encodeURIComponent(q)}&limit=10`,
-  condition: (q) => `${O5E}/conditions/?search=${encodeURIComponent(q)}&limit=10`,
+  // conditions: served from local data only (no reliable API endpoint)
 };
 
 // Fetch a single full entry by slug
@@ -23,7 +23,7 @@ async function o5eFetch(cat, slug) {
   if (!O5E_AVAILABLE) return null;
   const key = `${cat}:${slug}`;
   if (o5eCache[key]) return o5eCache[key];
-  const paths = {monster:'monsters',spell:'spells',item:'magicitems',condition:'conditions'};
+  const paths = {monster:'monsters',spell:'spells',item:'magicitems'};
   const path = paths[cat];
   if (!path) return null;
   try {
