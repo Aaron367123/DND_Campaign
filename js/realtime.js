@@ -146,7 +146,7 @@ function _setSyncStatus(state) {
 // ─── Entry point ─────────────────────────────────────────────────────────────
 function initRealtime() {
   // Skip if config hasn't been filled in yet
-  if (FIREBASE_CONFIG.apiKey === 'REPLACE_ME') {
+  if (firebaseConfig.apiKey === 'REPLACE_ME') {
     _setSyncStatus('offline');
     console.info('[SKT] Firebase not configured — running in local-only mode.\nSee js/realtime.js for setup instructions.');
     return;
@@ -161,7 +161,7 @@ function initRealtime() {
 
   try {
     // Avoid duplicate init if module is re-loaded
-    if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
     _fbDb = firebase.database();
   } catch(e) {
     console.error('[SKT] Firebase init failed:', e);
