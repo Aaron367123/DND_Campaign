@@ -1,33 +1,32 @@
 // ============================================================
-// SEARCH — local results + Open5e API full detail
+// SEARCH — local results + D&D 5e API full detail
 // ============================================================
 
-// Open5e API: https://api.open5e.com
-// Fully open, no key needed, CC SRD content.
-const O5E = 'https://api.open5e.com/v1';
-const o5eCache = {}; // slug -> fetched data, to avoid repeat calls
+// D&D 5e API: https://www.dnd5eapi.co
+// Free, no key needed, SRD content.
+const O5E = 'https://www.dnd5eapi.co/api';
+const o5eCache = {};
 
 // Endpoint map per category
 const O5E_ENDPOINTS = {
-  monster:   (q) => `${O5E}/monsters/?search=${encodeURIComponent(q)}&limit=10`,
-  spell:     (q) => `${O5E}/spells/?search=${encodeURIComponent(q)}&limit=10`,
-  item:      (q) => `${O5E}/magicitems/?search=${encodeURIComponent(q)}&limit=10`,
-  // conditions: served from local data only (no reliable API endpoint)
+  monster:   (q) => `${O5E}/monsters?name=${encodeURIComponent(q)}`,
+  spell:     (q) => `${O5E}/spells?name=${encodeURIComponent(q)}`,
+  item:      (q) => `${O5E}/magic-items?name=${encodeURIComponent(q)}`,
+  condition: (q) => `${O5E}/conditions?name=${encodeURIComponent(q)}`,
 };
 
-// Fetch a single full entry by slug
-// Open5e API is disabled when running from file:// (browser blocks cross-origin fetch)
+// API disabled when running from file:// (browser blocks cross-origin fetch)
 const O5E_AVAILABLE = location.protocol !== 'file:';
 
 async function o5eFetch(cat, slug) {
   if (!O5E_AVAILABLE) return null;
   const key = `${cat}:${slug}`;
   if (o5eCache[key]) return o5eCache[key];
-  const paths = {monster:'monsters',spell:'spells',item:'magicitems'};
+  const paths = {monster:'monsters', spell:'spells', item:'magic-items', condition:'conditions'};
   const path = paths[cat];
   if (!path) return null;
   try {
-    const r = await fetch(`${O5E}/${path}/${slug}/`);
+    const r = await fetch(`${O5E}/${path}/${slug}`);
     if (!r.ok) return null;
     const d = await r.json();
     o5eCache[key] = d;
@@ -35,155 +34,162 @@ async function o5eFetch(cat, slug) {
   } catch { return null; }
 }
 
-// Search Open5e for results not in local DB
+// Search API for results not in local DB
 async function o5eSearch(cat, query) {
   if (!O5E_AVAILABLE) return [];
   const key = `search:${cat}:${query}`;
   if (o5eCache[key]) return o5eCache[key];
-  const endpoint = O5E_ENDPOINTS[cat] || O5E_ENDPOINTS.monster;
+  const ep = O5E_ENDPOINTS[cat];
+  if (!ep) return [];
   try {
-    const r = await fetch(endpoint(query));
+    const r = await fetch(ep(query));
     if (!r.ok) return [];
     const d = await r.json();
-    const results = (d.results || []).map(item => o5eToLocal(cat, item));
+    // List responses return only index/name — fetch full detail for each
+    const items = (d.results || []).slice(0, 10);
+    const full = await Promise.all(items.map(item => o5eFetch(cat, item.index)));
+    const results = full.filter(Boolean).map(item => o5eToLocal(cat, item));
     o5eCache[key] = results;
     return results;
   } catch { return []; }
 }
 
-// Convert Open5e response to our local format
+// Convert dnd5eapi response to our internal format
 function o5eToLocal(cat, d) {
   if (cat === 'monster') {
+    const ac = d.armor_class?.[0]?.value ?? 10;
+    const speed = Object.entries(d.speed||{}).map(([k,v])=>k+' '+v).join(', ') || '—';
     return {
-      cat: 'monster', name: d.name, _slug: d.slug, _fromApi: true,
-      meta: `${d.size||''} ${d.type||''} · CR ${d.challenge_rating||'?'}`.trim(),
-      hp: d.hit_points || 0, ac: d.armor_class || 10,
-      speed: d.speed || '—',
+      cat: 'monster', name: d.name, _slug: d.index, _fromApi: true,
+      meta: `${d.size||''} ${d.type||''} · CR ${d.challenge_rating??'?'}`.trim(),
+      hp: d.hit_points || 0, ac,
+      speed,
       str: d.strength, dex: d.dexterity, con: d.constitution,
       int: d.intelligence, wis: d.wisdom, cha: d.charisma,
-      senses: d.senses || '', languages: d.languages || '',
       _raw: d,
     };
   }
   if (cat === 'spell') {
+    const levelStr = d.level === 0 ? 'Cantrip' : 'Level ' + d.level;
     return {
-      cat: 'spell', name: d.name, _slug: d.slug, _fromApi: true,
-      meta: (d.level_int===0?'Cantrip':'Level '+d.level_int)+' '+(d.school||''),
+      cat: 'spell', name: d.name, _slug: d.index, _fromApi: true,
+      meta: `${levelStr} ${d.school?.name||''}`.trim(),
       cast: d.casting_time || '—', range: d.range || '—',
-      components: d.components || '—', duration: d.duration || '—',
-      desc: d.desc || '', _raw: d,
+      components: (d.components||[]).join(', ') + (d.material ? ' ('+d.material+')' : ''),
+      duration: d.duration || '—',
+      desc: (d.desc||[]).join('\n\n'), _raw: d,
     };
   }
   if (cat === 'item') {
     return {
-      cat: 'item', name: d.name, _slug: d.slug, _fromApi: true,
-      meta: `${d.type||'Magic Item'}${d.rarity?' · '+d.rarity:''}`,
-      desc: d.desc || '', _raw: d,
+      cat: 'item', name: d.name, _slug: d.index, _fromApi: true,
+      meta: `${d.equipment_category?.name||'Magic Item'}${d.rarity?.name?' · '+d.rarity.name:''}`,
+      desc: (d.desc||[]).join('\n\n'), _raw: d,
     };
   }
   if (cat === 'condition') {
     return {
-      cat: 'condition', name: d.name, _slug: d.slug, _fromApi: true,
+      cat: 'condition', name: d.name, _slug: d.index, _fromApi: true,
       meta: 'Condition',
-      desc: (d.desc||[]).map(p=>p.desc||p).join('\n') || '', _raw: d,
+      desc: (d.desc||[]).join('\n'), _raw: d,
     };
   }
-  return {cat, name: d.name, _slug: d.slug, _fromApi: true, meta: ''};
+  return {cat, name: d.name, _slug: d.index, _fromApi: true, meta: ''};
 }
 
-// Build full detail HTML from an Open5e monster response
+// Build full detail HTML from a dnd5eapi monster response
 function renderMonsterFull(d, localData) {
   const r = d._raw || {};
   const hp = r.hit_points || localData?.hp || 0;
-  const ac = r.armor_class || localData?.ac || 0;
-  const speed = r.speed || localData?.speed || '—';
+  const acVal = r.armor_class?.[0]?.value ?? localData?.ac ?? 0;
+  const acType = r.armor_class?.[0]?.type || '';
+  const speed = Object.entries(r.speed||{}).map(([k,v])=>k+' '+v).join(', ') || localData?.speed || '—';
   const str=r.strength||10,dex=r.dexterity||10,con=r.constitution||10;
   const int=r.intelligence||10,wis=r.wisdom||10,cha=r.charisma||10;
   const ab=(l,s)=>`<div class="ability"><div class="ab-name">${l}</div><div class="ab-val">${s}</div><div class="ab-mod">${mod(s)>=0?'+':''}${mod(s)}</div></div>`;
   const section=(label,text)=>text?`<div class="detail-section"><strong>${label}.</strong> ${esc(text)}</div>`:'';
   const actions=(label,arr)=>{
     if(!arr||!arr.length)return'';
-    const rows=arr.map(a=>{
-      const atk=a.attack_bonus!==undefined?'Attack: +'+a.attack_bonus+', '+(a.damage_dice||'')+' '+(a.damage_type||''):'';
-      return'<em>'+esc(a.name||'')+'</em> '+esc(atk||a.desc||'');
-    }).join('<br><br>');
+    const rows=arr.map(a=>'<em>'+esc(a.name||'')+'</em> '+esc(a.desc||'')).join('<br><br>');
     return'<div class="action-block"><strong>'+label+'.</strong><br>'+rows+'</div>';
   };
   let html = '';
   html += '<div class="detail-stats">'
     + '<div class="stat-block"><div class="lab">HP</div><div class="val">'+hp+(r.hit_dice?' ('+r.hit_dice+')':'')+'</div></div>'
-    + '<div class="stat-block"><div class="lab">AC</div><div class="val">'+ac+(r.armor_desc?' ('+r.armor_desc+')':'')+'</div></div>'
+    + '<div class="stat-block"><div class="lab">AC</div><div class="val">'+acVal+(acType?' ('+acType+')':'')+'</div></div>'
     + '<div class="stat-block"><div class="lab">Speed</div><div class="val">'+esc(speed)+'</div></div>'
     + '</div>';
   html += '<div class="ability-grid">'+ab('STR',str)+ab('DEX',dex)+ab('CON',con)+ab('INT',int)+ab('WIS',wis)+ab('CHA',cha)+'</div>';
-  // Save throws, skills
-  if(r.strength_save!==null&&r.strength_save!==undefined){
-    const saves=[['STR',r.strength_save],['DEX',r.dexterity_save],['CON',r.constitution_save],['INT',r.intelligence_save],['WIS',r.wisdom_save],['CHA',r.charisma_save]].filter(([,v])=>v!=null);
-    if(saves.length)html+='<div class="detail-section"><strong>Saving Throws.</strong> '+saves.map(([l,v])=>l+' '+(v>=0?'+':'')+v).join(', ')+'</div>';
+  // Saving throws and skills from proficiencies array
+  if(r.proficiencies?.length){
+    const saves=r.proficiencies.filter(p=>p.proficiency.name.startsWith('Saving Throw:'))
+      .map(p=>p.proficiency.name.replace('Saving Throw: ','')+(p.value>=0?' +'+(p.value):' '+p.value));
+    if(saves.length)html+='<div class="detail-section"><strong>Saving Throws.</strong> '+saves.join(', ')+'</div>';
+    const skills=r.proficiencies.filter(p=>p.proficiency.name.startsWith('Skill:'))
+      .map(p=>p.proficiency.name.replace('Skill: ','')+(p.value>=0?' +'+(p.value):' '+p.value));
+    if(skills.length)html+='<div class="detail-section"><strong>Skills.</strong> '+skills.join(', ')+'</div>';
   }
-  if(r.skills){const sk=Object.entries(r.skills).map(([k,v])=>k+' '+(v>=0?'+':'')+v).join(', ');if(sk)html+='<div class="detail-section"><strong>Skills.</strong> '+esc(sk)+'</div>';}
-  if(r.damage_vulnerabilities)html+=section('Vulnerabilities',r.damage_vulnerabilities);
-  if(r.damage_resistances)html+=section('Resistances',r.damage_resistances);
-  if(r.damage_immunities)html+=section('Immunities',r.damage_immunities);
-  if(r.condition_immunities)html+=section('Condition Immunities',r.condition_immunities);
-  if(r.senses)html+=section('Senses',r.senses);
+  if(r.damage_vulnerabilities?.length)html+=section('Vulnerabilities',r.damage_vulnerabilities.join(', '));
+  if(r.damage_resistances?.length)html+=section('Resistances',r.damage_resistances.join(', '));
+  if(r.damage_immunities?.length)html+=section('Immunities',r.damage_immunities.join(', '));
+  if(r.condition_immunities?.length)html+=section('Condition Immunities',r.condition_immunities.map(c=>c.name).join(', '));
+  const senses=Object.entries(r.senses||{}).filter(([k])=>k!=='passive_perception').map(([k,v])=>k.replace(/_/g,' ')+' '+v).join(', ');
+  if(senses)html+=section('Senses',senses+(r.senses?.passive_perception!=null?', passive Perception '+r.senses.passive_perception:''));
   if(r.languages)html+=section('Languages',r.languages);
-  html+='<div class="detail-section"><strong>CR.</strong> '+esc(String(r.challenge_rating||'?'))+' &nbsp; <strong>XP.</strong> '+(r.xp||'?').toLocaleString()+'</div>';
-  if(r.special_abilities&&r.special_abilities.length)html+=actions('Traits',r.special_abilities);
-  if(r.actions&&r.actions.length)html+=actions('Actions',r.actions);
-  if(r.legendary_actions&&r.legendary_actions.length)html+=actions('Legendary Actions',r.legendary_actions);
-  if(r.reactions&&r.reactions.length)html+=actions('Reactions',r.reactions);
-  if(r.spell_list&&r.spell_list.length){
-    const spellLinks=r.spell_list.map(function(s){
-      const slug=s.split('/').pop();
-      const name=esc(slug.replace(/-/g,' '));
-      return'<a href="'+O5E+'/spells/'+slug+'" style="color:var(--accent);text-decoration:none" onclick="event.preventDefault();searchForSpell(\''+slug+'\')">'+name+'</a>';
-    }).join(', ');
-    html+='<div class="detail-section"><strong>Spells.</strong> '+spellLinks+'</div>';
-  }
+  html+='<div class="detail-section"><strong>CR.</strong> '+esc(String(r.challenge_rating??'?'))+' &nbsp; <strong>XP.</strong> '+(r.xp?.toLocaleString()||'?')+'</div>';
+  if(r.special_abilities?.length)html+=actions('Traits',r.special_abilities);
+  if(r.actions?.length)html+=actions('Actions',r.actions);
+  if(r.legendary_actions?.length)html+=actions('Legendary Actions',r.legendary_actions);
+  if(r.reactions?.length)html+=actions('Reactions',r.reactions);
   return html;
 }
 
 function renderSpellFull(d) {
   const r = d._raw || {};
+  const components = Array.isArray(r.components) ? r.components.join(', ')+(r.material?' ('+r.material+')':'') : (d.components||'—');
+  const desc = Array.isArray(r.desc) ? r.desc.join('\n\n') : (r.desc||d.desc||'');
+  const higherLevel = Array.isArray(r.higher_level) ? r.higher_level.join('\n\n') : (r.higher_level||'');
+  const classes = r.classes?.map(c=>c.name).join(', ') || '';
   let html = `<div class="detail-stats">
     <div class="stat-block"><div class="lab">Cast</div><div class="val">${esc(r.casting_time||d.cast||'—')}</div></div>
     <div class="stat-block"><div class="lab">Range</div><div class="val">${esc(r.range||d.range||'—')}</div></div>
     <div class="stat-block"><div class="lab">Duration</div><div class="val">${esc(r.duration||d.duration||'—')}</div></div>
   </div>`;
-  html += `<div class="detail-section"><strong>Components.</strong> ${esc(r.components||d.components||'—')}</div>`;
+  html += `<div class="detail-section"><strong>Components.</strong> ${esc(components)}</div>`;
   if(r.concentration)html+=`<div class="detail-section" style="color:var(--warning)">⚡ Requires Concentration</div>`;
-  if(r.ritual)html+=`<div class="detail-section" style="color:var(--info)">📿 Ritual</div>`;
-  html += `<div class="detail-section" style="line-height:1.7">${esc(r.desc||d.desc||'')}</div>`;
-  if(r.higher_level)html+=`<div class="detail-section"><strong>At Higher Levels.</strong> ${esc(r.higher_level)}</div>`;
-  if(r.dnd_class)html+=`<div class="detail-section" style="color:var(--text-muted);font-size:11px">Classes: ${esc(r.dnd_class)}</div>`;
+  if(r.ritual)html+=`<div class="detail-section" style="color:var(--accent)">📿 Ritual</div>`;
+  html += `<div class="detail-section" style="line-height:1.7">${esc(desc)}</div>`;
+  if(higherLevel)html+=`<div class="detail-section"><strong>At Higher Levels.</strong> ${esc(higherLevel)}</div>`;
+  if(classes)html+=`<div class="detail-section" style="color:var(--text-muted);font-size:11px">Classes: ${esc(classes)}</div>`;
   return html;
 }
 
 function renderItemFull(d) {
   const r = d._raw || {};
-  let html = `<div class="detail-section" style="line-height:1.7">${esc(r.desc||d.desc||'')}</div>`;
+  const desc = Array.isArray(r.desc) ? r.desc.join('\n\n') : (r.desc||d.desc||'');
+  let html = `<div class="detail-section" style="line-height:1.7">${esc(desc)}</div>`;
   if(r.requires_attunement)html=`<div class="detail-section" style="color:var(--warning)">🔗 Requires Attunement${typeof r.requires_attunement==='string'?' '+esc(r.requires_attunement):''}</div>`+html;
   return html;
 }
 
 function renderConditionFull(d) {
   const r = d._raw || {};
-  const descs = Array.isArray(r.desc) ? r.desc : (d.desc ? [{desc:d.desc}] : []);
-  return `<div class="detail-section" style="line-height:1.7">${descs.map(p=>`<p style="margin:0 0 8px">${esc(p.desc||p)}</p>`).join('')}</div>`;
+  // dnd5eapi returns desc as string[], Open5e returned [{desc:string}]
+  const descs = Array.isArray(r.desc) ? r.desc.map(p=>typeof p==='string'?p:(p.desc||'')) : (d.desc?[d.desc]:[]);
+  return `<div class="detail-section" style="line-height:1.7">${descs.map(p=>`<p style="margin:0 0 8px">${esc(p)}</p>`).join('')}</div>`;
 }
 
-// Spell link click from monster detail
+// Spell link click from monster detail — fetch by index directly
 function searchForSpell(slug) {
-  state.searchState.query = slug.replace(/-/g,' ');
   state.searchState.category = 'spell';
   state.searchState.detail = null;
   renderSearchTabs();
   renderSearchResults();
-  // Also trigger API search
-  o5eSearch('spell', state.searchState.query).then(results => {
-    const match = results.find(r => r._slug === slug);
-    if (match) { state.searchState.detail = match; renderSearchResults(); }
+  o5eFetch('spell', slug).then(full => {
+    if (!full) return;
+    const wrapped = o5eToLocal('spell', full);
+    state.searchState.detail = wrapped;
+    renderSearchResults();
   });
 }
 
